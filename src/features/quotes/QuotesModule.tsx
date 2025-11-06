@@ -4,6 +4,7 @@ import type { Quote } from '../../api/types';
 import { useApiClient } from '../../app/apiContext';
 import { ErrorBanner, LoadingIndicator } from '../../components/feedback';
 import { useApiRequest } from '../../hooks/useApiRequest';
+import { getErrorHeading } from '../../lib/errors';
 
 function QuoteCard({ quote }: { quote: Quote }) {
   return (
@@ -24,7 +25,9 @@ export function QuotesModule() {
 
   const fetchQuote = useCallback(() => api.getQuote(), [api]);
 
-  const { data, error, isLoading, refetch } = useApiRequest(fetchQuote);
+  const { data, error, isLoading, refetch } = useApiRequest(fetchQuote, {
+    requestName: 'quotes.random',
+  });
 
   return (
     <div className="module">
@@ -35,7 +38,14 @@ export function QuotesModule() {
       </div>
 
       {isLoading ? <LoadingIndicator message="Finding something inspiring…" /> : null}
-      {error ? <ErrorBanner message={error} /> : null}
+      {error ? (
+        <ErrorBanner
+          title={getErrorHeading(error)}
+          message={error.message}
+          hint={error.hint}
+          code={error.code}
+        />
+      ) : null}
       {!isLoading && !error && data ? <QuoteCard quote={data} /> : null}
     </div>
   );

@@ -4,6 +4,9 @@ import type { WeatherSummary } from '../../api/types';
 import { useApiClient } from '../../app/apiContext';
 import { LoadingIndicator, ErrorBanner } from '../../components/feedback';
 import { useApiRequest } from '../../hooks/useApiRequest';
+import { getErrorHeading, logError } from '../../lib/errors';
+import type { RequestError } from '../../lib/errors';
+import { validateLocationInput } from '../../lib/validation';
 
 const ICON_BASE_URL = 'https://openweathermap.org/img/wn';
 
@@ -66,6 +69,7 @@ function WeatherPanel({ summary }: { summary: WeatherSummary }) {
 export function WeatherModule() {
   const [cityInput, setCityInput] = useState('');
   const [activeCity, setActiveCity] = useState<string | undefined>(undefined);
+  const [inputError, setInputError] = useState<RequestError | null>(null);
 
   const api = useApiClient();
 
@@ -74,13 +78,30 @@ export function WeatherModule() {
     [api, activeCity],
   );
 
-  const { data, error, isLoading, refetch } = useApiRequest(fetchWeather);
+  const { data, error, isLoading, refetch } = useApiRequest(fetchWeather, {
+    requestName: 'weather.summary',
+  });
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const trimmed = cityInput.trim();
-    setActiveCity(trimmed.length > 0 ? trimmed : undefined);
+    const validation = validateLocationInput(cityInput);
+
+    if (!validation.valid) {
+      setInputError(validation.error);
+      logError(validation.error);
+      return;
+    }
+
+    const normalizedCity = validation.value;
+    setInputError(null);
+    setActiveCity(normalizedCity);
+    setCityInput(normalizedCity ?? '');
   };
+
+  const cityErrorId = inputError ? 'weather-city-error' : undefined;
+  const cityDescribedBy = inputError
+    ? `weather-city-help ${cityErrorId}`
+    : 'weather-city-help';
 
   return (
     <div className="module">
@@ -93,9 +114,16 @@ export function WeatherModule() {
             id="weather-city"
             name="city"
             value={cityInput}
-            onChange={(event) => setCityInput(event.target.value)}
+            onChange={(event) => {
+              setCityInput(event.target.value);
+              if (inputError) {
+                setInputError(null);
+              }
+            }}
             placeholder="e.g., Hyderabad,IN"
             className="input"
+            aria-describedby={cityDescribedBy}
+            aria-invalid={inputError ? 'true' : 'false'}
           />
           <button type="submit" className="button">
             Update
@@ -106,6 +134,7 @@ export function WeatherModule() {
             onClick={() => {
               setCityInput('');
               setActiveCity(undefined);
+              setInputError(null);
             }}
           >
             Reset
@@ -118,10 +147,29 @@ export function WeatherModule() {
             Refresh
           </button>
         </div>
+        <p id="weather-city-help" className="module__help">
+          Use a city name like "Hyderabad,IN" or provide coordinates such as "17.3850,78.4867".
+        </p>
+        {inputError ? (
+          <ErrorBanner
+            id={cityErrorId}
+            title="Update the location"
+            message={inputError.message}
+            hint={inputError.hint}
+            code={inputError.code}
+          />
+        ) : null}
       </form>
 
       {isLoading ? <LoadingIndicator message="Fetching weather details…" /> : null}
-      {error ? <ErrorBanner message={error} /> : null}
+      {error ? (
+        <ErrorBanner
+          title={getErrorHeading(error)}
+          message={error.message}
+          hint={error.hint}
+          code={error.code}
+        />
+      ) : null}
       {!isLoading && !error && data ? <WeatherPanel summary={data} /> : null}
     </div>
   );

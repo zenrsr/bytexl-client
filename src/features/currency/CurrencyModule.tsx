@@ -4,6 +4,30 @@ import type { CurrencyConversion } from '../../api/types';
 import { useApiClient } from '../../app/apiContext';
 import { ErrorBanner, LoadingIndicator } from '../../components/feedback';
 import { useApiRequest } from '../../hooks/useApiRequest';
+import { getErrorHeading, logError } from '../../lib/errors';
+import type { RequestError } from '../../lib/errors';
+import { validateCurrencyAmount } from '../../lib/validation';
+
+const sanitizeAmountInput = (rawValue: string) => {
+  let sanitized = rawValue.replace(/[^0-9.,-]/g, '');
+
+  if (sanitized.includes('-')) {
+    const withoutLeadingMinus = sanitized.replace(/-/g, '');
+    const hasLeadingMinus = rawValue.trim().startsWith('-');
+    sanitized = hasLeadingMinus ? `-${withoutLeadingMinus}` : withoutLeadingMinus;
+  }
+
+  const decimalIndex = sanitized.indexOf('.');
+  if (decimalIndex !== -1) {
+    sanitized =
+      sanitized.slice(0, decimalIndex + 1) +
+      sanitized
+        .slice(decimalIndex + 1)
+        .replace(/\./g, '');
+  }
+
+  return sanitized.replace(/,/g, '');
+};
 
 function formatCurrency(value: number, currency: 'USD' | 'EUR') {
   return new Intl.NumberFormat('en-US', {
@@ -47,7 +71,8 @@ function CurrencyResults({ conversion }: { conversion: CurrencyConversion }) {
 export function CurrencyModule() {
   const [amountInput, setAmountInput] = useState('100');
   const [selectedAmount, setSelectedAmount] = useState<number>(100);
-  const [inputError, setInputError] = useState<string | null>(null);
+  const [inputError, setInputError] = useState<RequestError | null>(null);
+  const [formatWarning, setFormatWarning] = useState<string | null>(null);
 
   const api = useApiClient();
 
@@ -56,28 +81,43 @@ export function CurrencyModule() {
     [api, selectedAmount],
   );
 
-  const { data, error, isLoading, refetch } = useApiRequest(fetchConversion);
+  const { data, error, isLoading, refetch } = useApiRequest(fetchConversion, {
+    requestName: 'currency.conversion',
+  });
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const trimmed = amountInput.trim();
-    const parsed = Number(trimmed);
+    const validation = validateCurrencyAmount(amountInput);
 
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setInputError('Please enter a positive INR amount.');
+    if (!validation.valid) {
+      setInputError(validation.error);
+      logError(validation.error);
       return;
     }
 
-    setInputError(null);
-    setAmountInput(trimmed);
+    const normalizedAmount = validation.value;
 
-    if (parsed === selectedAmount) {
+    setInputError(null);
+    setAmountInput(String(normalizedAmount));
+
+    if (normalizedAmount === selectedAmount) {
       await refetch();
       return;
     }
 
-    setSelectedAmount(parsed);
+    setSelectedAmount(normalizedAmount);
   };
+
+  const amountErrorId = inputError ? 'inr-amount-error' : undefined;
+  const amountFormatId = formatWarning ? 'inr-amount-format-warning' : undefined;
+  const amountDescribedBy = [amountFormatId, amountErrorId]
+    .reduce<string[]>((acc, id) => {
+      if (id) {
+        acc.push(id);
+      }
+      return acc;
+    }, ['inr-amount-help'])
+    .join(' ');
 
   return (
     <div className="module">
@@ -86,15 +126,37 @@ export function CurrencyModule() {
           INR amount:
         </label>
         <div className="module__controls">
+          {formatWarning ? (
+            <p
+              id={amountFormatId}
+              className="input-error"
+              role="status"
+              aria-live="polite"
+            >
+              {formatWarning}
+            </p>
+          ) : null}
           <input
             id="inr-amount"
             name="amount"
             inputMode="decimal"
             value={amountInput}
-            onChange={(event) => setAmountInput(event.target.value)}
+            onChange={(event) => {
+              const sanitized = sanitizeAmountInput(event.target.value);
+              setAmountInput(sanitized);
+              if (sanitized !== event.target.value) {
+                setFormatWarning('Only numbers and decimal values are allowed.');
+              } else if (formatWarning) {
+                setFormatWarning(null);
+              }
+              if (inputError) {
+                setInputError(null);
+              }
+            }}
             className="input"
             placeholder="Enter amount in INR"
-            aria-describedby="inr-amount-help"
+            aria-describedby={amountDescribedBy}
+            aria-invalid={inputError || formatWarning ? 'true' : 'false'}
           />
           <button type="submit" className="button">
             Convert
@@ -111,11 +173,26 @@ export function CurrencyModule() {
           Live conversion powered by the InfoHub currency API. Validation prevents invalid
           input.
         </p>
-        {inputError ? <p className="input-error">{inputError}</p> : null}
+        {inputError ? (
+          <ErrorBanner
+            id={amountErrorId}
+            title="Update the amount"
+            message={inputError.message}
+            hint={inputError.hint}
+            code={inputError.code}
+          />
+        ) : null}
       </form>
 
       {isLoading ? <LoadingIndicator message="Updating exchange rates…" /> : null}
-      {error ? <ErrorBanner message={error} /> : null}
+      {error ? (
+        <ErrorBanner
+          title={getErrorHeading(error)}
+          message={error.message}
+          hint={error.hint}
+          code={error.code}
+        />
+      ) : null}
       {!isLoading && !error && data ? <CurrencyResults conversion={data} /> : null}
     </div>
   );

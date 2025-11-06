@@ -2,6 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
 
+import { ApiError } from '../../api/client';
 import type { WeatherSummary } from '../../api/types';
 import { createApiClientMock, renderWithApiClient } from '../../test/testUtils';
 import { WeatherModule } from './WeatherModule';
@@ -66,5 +67,65 @@ describe('WeatherModule', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Could not fetch weather data.',
     );
+  });
+
+  it('rejects invalid location formats before contacting the API', async () => {
+    const mockApi = createApiClientMock({
+      getWeather: vi.fn().mockResolvedValue(sampleWeather),
+    });
+
+    renderWithApiClient(<WeatherModule />, mockApi);
+    await screen.findByText(/Hyderabad, IN/i);
+
+    const cityInput = screen.getByPlaceholderText(/hyderabad/i);
+    await userEvent.clear(cityInput);
+    await userEvent.type(cityInput, '12345');
+    await userEvent.click(screen.getByRole('button', { name: /update/i }));
+
+    const alert = await screen.findByRole('alert', { name: /update the location/i });
+    expect(alert).toHaveTextContent('USER-LOCATION-FORMAT');
+    expect(alert).toHaveTextContent('We could not understand that location.');
+    expect(mockApi.getWeather).toHaveBeenCalledTimes(1);
+  });
+
+  it('flags placeholder values without calling the API again', async () => {
+    const mockApi = createApiClientMock({
+      getWeather: vi.fn().mockResolvedValue(sampleWeather),
+    });
+
+    renderWithApiClient(<WeatherModule />, mockApi);
+    await screen.findByText(/Hyderabad, IN/i);
+
+    const cityInput = screen.getByPlaceholderText(/hyderabad/i);
+    await userEvent.clear(cityInput);
+    await userEvent.type(cityInput, 'unkown');
+    await userEvent.click(screen.getByRole('button', { name: /update/i }));
+
+    const alert = await screen.findByRole('alert', { name: /update the location/i });
+    expect(alert).toHaveTextContent('USER-LOCATION-PLACEHOLDER');
+    expect(alert).toHaveTextContent('The location looks like a placeholder value.');
+    expect(mockApi.getWeather).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a friendly message when the API cannot find the location', async () => {
+    const mockApi = createApiClientMock({
+      getWeather: vi
+        .fn()
+        .mockResolvedValueOnce(sampleWeather)
+        .mockRejectedValueOnce(new ApiError('Upstream request failed with status 404', 404)),
+    });
+
+    renderWithApiClient(<WeatherModule />, mockApi);
+    await screen.findByText(/Hyderabad, IN/i);
+
+    const cityInput = screen.getByPlaceholderText(/hyderabad/i);
+    await userEvent.clear(cityInput);
+    await userEvent.type(cityInput, 'Unknown');
+    await userEvent.click(screen.getByRole('button', { name: /update/i }));
+
+    const alert = await screen.findByRole('alert', { name: /please review your input/i });
+    expect(alert).toHaveTextContent('USER-LOCATION-NOT-FOUND');
+    expect(alert).toHaveTextContent('We could not find weather data for that location.');
+    expect(mockApi.getWeather).toHaveBeenCalledTimes(2);
   });
 });

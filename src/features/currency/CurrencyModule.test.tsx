@@ -45,7 +45,9 @@ describe('CurrencyModule', () => {
     await userEvent.type(amountInput, '-50');
     await userEvent.click(screen.getByRole('button', { name: /convert/i }));
 
-    expect(screen.getByText(/Please enter a positive INR amount/i)).toBeInTheDocument();
+    const validationAlert = screen.getByRole('alert', { name: /update the amount/i });
+    expect(validationAlert).toHaveTextContent('USER-CURRENCY-AMOUNT-RANGE');
+    expect(validationAlert).toHaveTextContent('Amounts must be greater than zero.');
     expect(mockApi.convertCurrency).toHaveBeenCalledTimes(1);
 
     await userEvent.clear(amountInput);
@@ -54,6 +56,28 @@ describe('CurrencyModule', () => {
 
     await screen.findByText(/₹ 250/);
     expect(mockApi.convertCurrency).toHaveBeenCalledWith(250);
+  });
+
+  it('warns inline when non-numeric characters are entered', async () => {
+    const mockApi = createApiClientMock({
+      convertCurrency: vi.fn().mockResolvedValue(sampleConversion(100)),
+    });
+
+    renderWithApiClient(<CurrencyModule />, mockApi);
+    await screen.findByText(/₹ 100/);
+
+    const amountInput = screen.getByPlaceholderText(/enter amount/i) as HTMLInputElement;
+    await userEvent.clear(amountInput);
+    await userEvent.type(amountInput, 'ab');
+
+    expect(
+      await screen.findByText(/Only numbers and decimal values are allowed/i),
+    ).toBeInTheDocument();
+    expect(amountInput.value).toBe('');
+
+    await userEvent.type(amountInput, '250');
+    expect(screen.queryByText(/Only numbers and decimal values are allowed/i)).toBeNull();
+    expect(amountInput.value).toBe('250');
   });
 
   it('surfaces API errors to the user', async () => {
